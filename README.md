@@ -9,8 +9,8 @@
 
 ### 1. 安装Oracle Instant Client(服务端)
 * #### 安装RPM文件
-在Oracle官网地址 [http://www.oracle.com/technetwork/topics/](http://www.oracle.com/technetwork/topics/linuxx86-64soft-092277.html) 下载以下RPM文件：
-其中官网说了： 18.3 can connect to Oracle Database 11.2 or later.
+在Oracle官网地址 [http://www.oracle.com/technetwork/topics/](http://www.oracle.com/technetwork/topics/linuxx86-64soft-092277.html) 下载以下RPM文件： </br>
+其中官网说了： 18.3 can connect to Oracle Database 11.2 or later. </br>
 所以我们就下载18.3版本好了。
 ```bash
 oracle-instantclient18.3-basic-18.3.0.0.0-1.x86_64.rpm

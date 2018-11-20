@@ -8,9 +8,31 @@ crontab:
 # oracle_monitor
 */5 * * * *  python /{your_dir}/db_monitor/oracle_monitor.py >/dev/null 2>&1    # 每5分钟检测一次
 """
+import os
 import time
+import logging.handlers
+from functools import reduce
 import cx_Oracle
 from elasticsearch import Elasticsearch, helpers
+from elasticsearch.exceptions import *
+import sys
+
+reload(sys)
+sys.setdefaultencoding('utf-8')
+
+CURRENT_DIR = reduce(lambda x, y: os.path.dirname(x), range(1), os.path.abspath(__file__))
+LOG_DIR = os.path.join(CURRENT_DIR, 'logs')
+if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR)
+LOG_FILE = os.path.join(LOG_DIR, 'oracle_monitor.log')
+
+handler = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=1024 * 1024, backupCount=5)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+
+logger = logging.getLogger('oracle_monitor')
+logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
 
 # ----- 需要修改的参数 -----
 # oracle 监测
@@ -20,7 +42,7 @@ db_host = '192.168.10.182'
 db_port = '1521'
 db_service_name = 'orcl'
 # es 持久化
-es = Elasticsearch('127.0.0.1')
+es_host = '127.0.0.1'
 appname = 'dbmonitor'
 data_type = 'oracle'
 token = '4a859fff6e5c4521aab187eee1cfceb8'
@@ -188,10 +210,40 @@ query_dict = dict(
                   AND event not in ( 'SQL*Net message from client','SQL*Net more data from client','pmon timer','rdbms ipc message','rdbms ipc reply', 'smon timer')",
     dg_error="SELECT ERROR_CODE, SEVERITY, MESSAGE, TO_CHAR(TIMESTAMP, 'DD-MON-RR HH24:MI:SS') TIMESTAMP FROM V$DATAGUARD_STATUS WHERE CALLOUT='YES' AND TIMESTAMP > SYSDATE-1",
     dg_sequence_number="SELECT MAX (sequence#) FROM v$log_history",
-    dg_sequence_number_stby="select max(sequence#) from v$archived_log"
+    dg_sequence_number_stby="select max(sequence#) from v$archived_log",
+    # extra
+    instance_status="select status from v$instance",
+    database_status="select open_mode from v$database"
+
 )
 
 
+def catch_exception(func):
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except cx_Oracle.DatabaseError as e:
+            logger.error('%s\n' % e)
+            sys.exit()
+        except TransportError as e:
+            if isinstance(e, ConnectionTimeout):
+                logger.error('Elasticsearch read timed out\n')
+            elif isinstance(e, ConnectionError):
+                logger.error('Elasticsearch connection refused\n')
+            else:
+                logger.error('System err\n')
+            sys.exit()
+        except Exception as e:
+            logger.error('Error execute: %s' % func.__name__)
+            logger.error('%s\n' % e)
+            sys.exit()
+        finally:
+            pass
+
+    return wrapper
+
+
+@catch_exception
 def execute_query():
     conn = cx_Oracle.connect(db_username, db_password, '{db_host}:{db_port}/{db_service_name}'.format(
         db_host=db_host,
@@ -210,16 +262,23 @@ def execute_query():
                 row = cur.execute(query_dict[query_item]).fetchone()
                 query_result[query_item] = str(row[0]).strip() if row else row
         except cx_Oracle.DatabaseError as e:
-            print(query_item)
-            print(e.message.message)
-
+            logger.error(query_item)
+            logger.error(e)
+            # query_result[query_item] = e.message.message
+            query_result[query_item] = str(e)
+        except Exception as e:
+            logger.error(query_item)
+            logger.error(e)
+            query_result[query_item] = None
     cur.close()
     conn.close()
     return query_result
 
 
+@catch_exception
 def es_persist(doc_list):
     # create index if not exist
+    es = Elasticsearch(es_host)
     if not es.indices.exists(index=index_name):
         settings = {
             'index': {
@@ -254,7 +313,7 @@ def es_persist(doc_list):
                                                  mappings=mappings)
                                        )
         if create_res.get('acknowledged'):
-            print('create {index_name} successfully'.format(index_name=index_name))
+            logger.info('Create {index_name} successfully'.format(index_name=index_name))
 
     # bulk data
     actions = []
@@ -273,11 +332,11 @@ def es_persist(doc_list):
             '_source': _source
         }
         actions.append(action)
-    bulk_res = helpers.bulk(client=es, actions=actions)
-    return bulk_res
+    success, failed = helpers.bulk(client=es, actions=actions)
+    return success, failed
 
 
 if __name__ == "__main__":
     query_result = execute_query()
-    bulk_res = es_persist([query_result])
-    print(bulk_res)
+    success, failed = es_persist([query_result])
+    logger.info('Bulk success: %s, failed: %s\n' % (success, failed))
