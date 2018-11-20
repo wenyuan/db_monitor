@@ -1,0 +1,2 @@
+# -*- coding: utf-8 -*-
+cx_Oracle==7.0.0
