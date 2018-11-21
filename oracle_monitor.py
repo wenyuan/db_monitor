@@ -43,16 +43,15 @@ db_port = '1521'
 db_service_name = 'orcl'
 # es 持久化
 es_host = '127.0.0.1'
-appname = 'dbmonitor'
-data_type = 'oracle'
 token = '4a859fff6e5c4521aab187eee1cfceb8'
-index_name = 'cc-{appname}-{data_type}-{token}-{suffix}'.format(
+appname = 'dbmonitor'
+doc_type = 'oracle'
+index_name = 'cc-{appname}-{doc_type}-{token}-{suffix}'.format(
     appname=appname,
-    data_type=data_type,
+    doc_type=doc_type,
     token=token,
     suffix=time.strftime('%Y.%m.%d')
 )
-index_type = 'oracle'
 # ------------------------
 
 query_dict = dict(
@@ -288,7 +287,7 @@ def es_persist(doc_list):
             }
         }
         mappings = {
-            index_type: {
+            doc_type: {
                 'dynamic_templates': [
                     {
                         'string_fields': {
@@ -320,7 +319,7 @@ def es_persist(doc_list):
     for doc in doc_list:
         _source = {
             'appname': appname,
-            'type': data_type,
+            'type': doc_type,
             'topic': appname,
             '@timestamp': int(round(time.time() * 1000)),
             'oracle': doc
@@ -328,7 +327,7 @@ def es_persist(doc_list):
         action = {
             '_op_type': 'index',
             '_index': index_name,
-            '_type': index_type,
+            '_type': doc_type,
             '_source': _source
         }
         actions.append(action)
